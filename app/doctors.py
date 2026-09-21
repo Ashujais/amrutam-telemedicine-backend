@@ -26,6 +26,8 @@ def create_doctor(
     user = db.get(User, user_id)
     if not user or not user.is_active:
         raise HTTPException(404, "User not found")
+    if user.role != Role.patient:
+        raise HTTPException(409, "Only patient accounts can become doctors")
     if db.get(Doctor, user_id):
         raise HTTPException(409, "Doctor already exists")
     user.role = Role.doctor
@@ -96,7 +98,15 @@ def list_slots(
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ):
-    if not db.get(Doctor, doctor_id):
+    doctor = db.get(Doctor, doctor_id)
+    doctor_user = db.get(User, doctor_id)
+    if (
+        doctor is None
+        or not doctor.is_verified
+        or doctor_user is None
+        or not doctor_user.is_active
+        or doctor_user.deleted_at is not None
+    ):
         raise HTTPException(404, "Doctor not found")
     filters = [
         AvailabilitySlot.doctor_id == doctor_id,
@@ -159,3 +169,24 @@ def add_slot(
         db.rollback()
         raise HTTPException(409, "Overlapping slot") from None
     return slot
+
+
+@router.delete("/slots/{slot_id}", status_code=204)
+def delete_slot(
+    slot_id: uuid.UUID,
+    request: Request,
+    doctor_user: User = Depends(require_role(Role.doctor)),
+    db: Session = Depends(get_db),
+):
+    slot = db.scalar(
+        select(AvailabilitySlot).where(AvailabilitySlot.id == slot_id).with_for_update()
+    )
+    if slot is None:
+        raise HTTPException(404, "Slot not found")
+    if slot.doctor_id != doctor_user.id:
+        raise HTTPException(403, "Access denied")
+    if slot.is_booked:
+        raise HTTPException(409, "Booked slots cannot be deleted")
+    audit(db, doctor_user, "slot.deleted", "availability_slot", slot.id, request.state.request_id)
+    db.delete(slot)
+    db.commit()

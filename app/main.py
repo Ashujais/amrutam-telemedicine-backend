@@ -112,7 +112,11 @@ async def request_context(request: Request, call_next):
             "latency_ms": round(elapsed * 1000, 2),
         },
     )
-    if path == "/api/v1/consultations" and request.method == "POST" and response.status_code >= 400:
+    if (
+        request.url.path == "/api/v1/consultations"
+        and request.method == "POST"
+        and response.status_code >= 400
+    ):
         BOOKING_FAILURES.inc()
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Content-Type-Options"] = "nosniff"

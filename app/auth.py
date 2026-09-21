@@ -12,7 +12,17 @@ from app.config import get_settings
 from app.db import get_db
 from app.dependencies import current_user
 from app.models import Profile, Role, User
-from app.schemas import LoginIn, MfaEnabledOut, MfaSetupOut, RefreshIn, RegisterIn, Tokens, UserOut
+from app.schemas import (
+    LoginIn,
+    MfaEnabledOut,
+    MfaSetupOut,
+    ProfileIn,
+    ProfileOut,
+    RefreshIn,
+    RegisterIn,
+    Tokens,
+    UserOut,
+)
 from app.security import (
     decode_token,
     decrypt_mfa,
@@ -119,6 +129,30 @@ def me(user: User = Depends(current_user)):
     return user
 
 
+@router.get("/profile", response_model=ProfileOut)
+def get_profile(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    profile = db.get(Profile, user.id)
+    if profile is None:
+        raise HTTPException(404, "Profile not found")
+    return profile
+
+
+@router.patch("/profile", response_model=ProfileOut)
+def update_profile(
+    body: ProfileIn,
+    request: Request,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    profile = db.get(Profile, user.id)
+    if profile is None:
+        raise HTTPException(404, "Profile not found")
+    profile.full_name = body.full_name
+    audit(db, user, "profile.updated", "profile", user.id, request.state.request_id)
+    db.commit()
+    return profile
+
+
 @router.post("/logout", status_code=204)
 def logout(request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)):
     user.token_version += 1
@@ -127,11 +161,14 @@ def logout(request: Request, user: User = Depends(current_user), db: Session = D
 
 
 @router.post("/mfa/setup", response_model=MfaSetupOut)
-def mfa_setup(user: User = Depends(current_user), db: Session = Depends(get_db)):
+def mfa_setup(
+    request: Request, user: User = Depends(current_user), db: Session = Depends(get_db)
+):
     if user.mfa_enabled:
         raise HTTPException(409, "MFA already enabled")
     secret = pyotp.random_base32()
     user.mfa_secret_encrypted = encrypt_mfa(secret)
+    audit(db, user, "auth.mfa_setup", "user", user.id, request.state.request_id)
     db.commit()
     return {
         "secret": secret,

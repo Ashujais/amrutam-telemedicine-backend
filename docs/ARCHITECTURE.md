@@ -8,17 +8,17 @@ The service covers user lifecycle, role-based access, doctor availability, booki
 
 ```mermaid
 flowchart LR
-  Client[Web/mobile clients] --> Ingress[TLS ingress / WAF]
+  Client[Web/mobile clients] --> Ingress[TLS ingress / WAF: production design]
   Ingress --> API[Stateless FastAPI replicas]
   API --> PG[(PostgreSQL primary)]
   API --> Redis[(Redis: rate limits and refresh replay)]
-  API --> Metrics[Prometheus scrape]
-  API --> Traces[OTLP collector]
-  API --> Logs[JSON log pipeline]
+  API --> Metrics[Prometheus scrape: deployment design]
+  API --> Traces[OTLP collector: deployment design]
+  API --> Logs[JSON log pipeline: deployment design]
   Migration[Alembic migration job] --> PG
 ```
 
-Modules keep request validation and authorization in routes/dependencies; business transitions and booking coordination live in services; SQLAlchemy models carry database constraints. PostgreSQL is the source of truth. Redis has no medical records or booking authority. API replicas can scale horizontally behind a load balancer. Docker Compose is a reproducible local deployment, not a multi-AZ production deployment.
+Modules keep request validation and authorization in routes/dependencies; business transitions and booking coordination live in services; SQLAlchemy models carry database constraints. PostgreSQL is the source of truth. Redis has no medical records or booking authority. API replicas can scale horizontally behind a load balancer. Docker Compose is a reproducible local deployment, not a multi-AZ production deployment. The ingress, collector, scrape service and log pipeline in the diagram are deployment designs; only API/DB/Redis/migration run in local Compose. A temporary local OTLP receiver has verified trace export, as documented in [operations](OPERATIONS.md).
 
 ## Data model
 
@@ -56,7 +56,7 @@ sequenceDiagram
   Note over A,DB: Concurrent key/slot conflict resolves to replay or 409
 ```
 
-The slot row lock serializes competing bookings at READ COMMITTED. The second transaction waits, then sees `is_booked` and returns 409. The unique consultation-slot constraint remains a safety net. Concurrent requests with the same actor/key are serialized by the unique idempotency index; after a duplicate-key error the API rolls back and reads the committed result. Same key/different payload gives 409. Idempotency records should be retained at least as long as client retry windows and audited before pruning. State updates lock the consultation; prescription creation locks it too. Database commits also include the related audit row. A cancellation retires the slot, so rescheduling creates a new slot and preserves history.
+The slot row lock serializes competing bookings at READ COMMITTED. After acquiring the lock, the transaction checks the idempotency record again: a concurrent retry with the same actor/key replays the committed consultation, while a different key sees `is_booked` and returns 409. The unique consultation-slot and idempotency constraints remain safety nets; a duplicate-key error triggers rollback and a committed-result lookup. Same key/different payload gives 409. Idempotency records should be retained at least as long as client retry windows and audited before pruning. State updates lock the consultation; prescription creation locks it too. Database commits also include the related audit row. A cancellation retires the slot, so rescheduling creates a new slot and preserves history.
 
 Payment rows model an internal lifecycle: pending → succeeded/failed and succeeded → refunded. Admin-only state changes are transactional and keyed. A production provider integration would verify signed webhooks, bind provider transaction IDs, and reconcile asynchronously. Notifications and provider calls must occur after commit, via an outbox/worker with bounded exponential backoff and jitter; this repository does not send notifications or collect money. Never retry a non-idempotent remote request without a provider idempotency key.
 
@@ -76,7 +76,7 @@ Retries belong at clients for 429/503 or network timeout, with exponential backo
 
 ## Deployment, backup, and recovery
 
-Production rollout should run Alembic once as a release job, then roll stateless API replicas behind TLS with readiness probes, minimum two availability zones, and a surge capacity policy. Secrets come from a secret manager rather than image layers. Use managed PostgreSQL with daily full backups, continuous WAL archiving and point-in-time recovery, encrypted backup copies in a second region, and a 30-day operational retention window (adjust for legal/clinical policy). Suggested objectives: RPO 15 minutes and RTO 4 hours; verify with quarterly restore drills. For logical corruption, stop writers, select a clean recovery point, restore to a new cluster, validate counts and critical bookings, then switch traffic. For zone loss, fail over to a healthy replica; for region loss, restore the cross-region copy and replay WAL. Redis may be rebuilt, but outstanding refresh replay state is lost, so rotate token versions or force reauthentication after total Redis loss.
+Production rollout should run Alembic once as a release job, then roll stateless API replicas behind TLS with readiness probes, minimum two availability zones, and a surge capacity policy. Secrets come from a secret manager rather than image layers. Use managed PostgreSQL with daily full backups, continuous WAL archiving and point-in-time recovery, encrypted backup copies in a second region, and a 30-day operational retention window (adjust for legal/clinical policy). Suggested objectives: RPO 15 minutes and RTO 4 hours; these are unproven until quarterly PITR restore drills. A separate local logical dump/restore drill is documented in [operations](OPERATIONS.md). For logical corruption, stop writers, select a clean recovery point, restore to a new cluster, validate counts and critical bookings, then switch traffic. For zone loss, fail over to a healthy replica; for region loss, restore the cross-region copy and replay WAL. Redis may be rebuilt, but outstanding refresh replay state is lost, so rotate token versions or force reauthentication after total Redis loss.
 
 ## Trade-offs
 

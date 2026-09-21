@@ -12,12 +12,14 @@ The live OpenAPI schema at `/openapi.json` and Swagger UI at `/docs` are authori
 | POST `/auth/login` | Public | Access/refresh tokens; TOTP code if enabled |
 | POST `/auth/refresh` | Public with refresh token | One-time refresh rotation |
 | GET `/auth/me` | User | Own non-sensitive account fields |
+| GET/PATCH `/auth/profile` | User | Read/update own name |
 | POST `/auth/logout` | User | Invalidate all current tokens |
 | POST `/auth/mfa/setup`, `/auth/mfa/enable?code=123456` | User | TOTP enrollment |
 | DELETE `/auth/me` | User | Soft delete and disable account |
 | POST `/doctors/admin/{user_id}` | Admin | Promote/verify doctor |
 | GET `/doctors` | Public | Search specialty and availability |
 | POST `/doctors/slots` | Doctor | Add future non-overlapping slot |
+| DELETE `/doctors/slots/{slot_id}` | Owning doctor | Remove an unbooked slot |
 | GET `/doctors/{doctor_id}/slots` | Public | Open future slots |
 | POST `/consultations` | Patient | Book with `Idempotency-Key` |
 | GET `/consultations`, `/{id}` | User | Filter own/all permitted consultations |

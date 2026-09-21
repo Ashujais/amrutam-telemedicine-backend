@@ -40,6 +40,15 @@ class UserOut(ORMModel):
     mfa_enabled: bool
 
 
+class ProfileIn(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)
+
+
+class ProfileOut(ORMModel):
+    user_id: uuid.UUID
+    full_name: str
+
+
 class DoctorIn(BaseModel):
     specialty: str = Field(min_length=2, max_length=80)
     license_number: str = Field(min_length=2, max_length=80)

@@ -31,6 +31,16 @@ This implementation handles health data. Deploy it only behind TLS with network 
 
 Attack surfaces are the public HTTP API and docs, health/metrics paths, database and Redis connections, container images, CI pipeline, logs, and administrative command. Actors include patients, doctors, admins, anonymous users, malicious clients, and infrastructure operators.
 
+## OWASP risk mapping
+
+- Broken access control: server-side database role checks, resource ownership checks, and 401/403 integration tests.
+- Cryptographic failures: Argon2id password hashes and encrypted TOTP seeds in code; production TLS and database/backup encryption are deployment requirements.
+- Injection and insecure design: Pydantic validation, parameterized SQLAlchemy queries, PostgreSQL uniqueness/exclusion constraints, and transaction-scoped booking.
+- Security misconfiguration and vulnerable components: restricted CORS and response headers, environment-supplied secrets, and CI `pip-audit`; production ingress and image scanning remain operational tasks.
+- Identification/authentication failures: expiring JWTs, one-time refresh use, MFA for admins, and Redis-backed rate limiting.
+- Security logging/monitoring failures: structured request logs, correlation IDs, audit rows for sensitive actions, and request/error metrics; production alerting and immutable audit export remain to be configured.
+- Server-side request forgery: API users cannot supply an outbound URL; OTLP exporter destination is operator-controlled configuration.
+
 ## Data classification, retention, and encryption
 
 Prescription medication/instructions and consultation associations are restricted clinical data. Login credentials, TOTP seeds, JWT signing keys, and provider references are security-sensitive. Email/name are personal data. Metrics and logs should contain only operational metadata. Audit details must avoid medical text and tokens. Use least privilege for database accounts, separate audit access, and immutable exported audit storage in production.

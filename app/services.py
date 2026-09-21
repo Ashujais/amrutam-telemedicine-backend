@@ -9,7 +9,9 @@ from app.models import (
     AvailabilitySlot,
     Consultation,
     ConsultationStatus,
+    Doctor,
     IdempotencyRecord,
+    Role,
     User,
     now,
 )
@@ -50,24 +52,45 @@ def book(
     db: Session, patient: User, slot_id: uuid.UUID, key: str, request_id: str | None
 ) -> tuple[Consultation, bool]:
     fingerprint = hash_request(str(slot_id))
-    existing = db.scalar(
-        select(IdempotencyRecord).where(
-            IdempotencyRecord.actor_id == patient.id,
-            IdempotencyRecord.scope == "booking",
-            IdempotencyRecord.key == key,
-        )
+    record_query = select(IdempotencyRecord).where(
+        IdempotencyRecord.actor_id == patient.id,
+        IdempotencyRecord.scope == "booking",
+        IdempotencyRecord.key == key,
     )
-    if existing:
+
+    def replay_if_present() -> tuple[Consultation, bool] | None:
+        existing = db.scalar(record_query)
+        if existing is None:
+            return None
         if existing.request_hash != fingerprint:
             raise HTTPException(409, "Idempotency key reused with different request")
         return db.get(Consultation, uuid.UUID(existing.resource_id)), True
+
+    replay = replay_if_present()
+    if replay is not None:
+        return replay
     slot = db.scalar(
         select(AvailabilitySlot).where(AvailabilitySlot.id == slot_id).with_for_update()
     )
     if slot is None:
         raise HTTPException(404, "Slot not found")
+    # A concurrent request may have committed while this transaction waited for the slot lock.
+    replay = replay_if_present()
+    if replay is not None:
+        return replay
     if slot.is_booked or slot.starts_at <= now():
         raise HTTPException(409, "Slot unavailable")
+    doctor_user = db.scalar(select(User).where(User.id == slot.doctor_id).with_for_update())
+    doctor = db.get(Doctor, slot.doctor_id)
+    if (
+        doctor_user is None
+        or not doctor_user.is_active
+        or doctor_user.deleted_at is not None
+        or doctor_user.role != Role.doctor
+        or doctor is None
+        or not doctor.is_verified
+    ):
+        raise HTTPException(409, "Doctor unavailable")
     slot.is_booked = True
     consultation = Consultation(slot_id=slot.id, patient_id=patient.id, doctor_id=slot.doctor_id)
     db.add(consultation)

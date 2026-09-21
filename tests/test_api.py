@@ -84,6 +84,15 @@ def test_auth_mfa_and_errors(client):
         ).status_code
         == 401
     )
+    with SessionLocal() as db:
+        from sqlalchemy import func, select
+
+        from app.models import AuditLog
+
+        mfa_setups = db.scalar(
+            select(func.count(AuditLog.id)).where(AuditLog.action == "auth.mfa_setup")
+        )
+        assert mfa_setups == 1
 
 
 def test_booking_race_lifecycle_and_access(client):
@@ -261,6 +270,14 @@ def test_booking_race_lifecycle_and_access(client):
     )
     assert replay_payment.status_code == 201
     assert replay_payment.json()["id"] == payment.json()["id"]
+    assert (
+        client.post(
+            f"/api/v1/admin/consultations/{consultation_id}/payment",
+            json={"amount_minor": 9999, "currency": "INR"},
+            headers={**admin_headers, "Idempotency-Key": "payment-create-001"},
+        ).status_code
+        == 409
+    )
     changed = client.patch(
         f"/api/v1/admin/payments/{payment.json()['id']}",
         json={"status": "succeeded", "provider_reference": "DEMO-RECEIPT"},
@@ -268,6 +285,29 @@ def test_booking_race_lifecycle_and_access(client):
     )
     assert changed.status_code == 200, changed.text
     assert changed.json()["status"] == "succeeded"
+    repeated_status = client.patch(
+        f"/api/v1/admin/payments/{payment.json()['id']}",
+        json={"status": "succeeded", "provider_reference": "DEMO-RECEIPT"},
+        headers={**admin_headers, "Idempotency-Key": "payment-status-001"},
+    )
+    assert repeated_status.status_code == 200
+    assert repeated_status.json()["id"] == payment.json()["id"]
+    assert (
+        client.patch(
+            f"/api/v1/admin/payments/{payment.json()['id']}",
+            json={"status": "refunded", "provider_reference": "DEMO-RECEIPT"},
+            headers={**admin_headers, "Idempotency-Key": "payment-status-001"},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.patch(
+            f"/api/v1/admin/payments/{payment.json()['id']}",
+            json={"status": "failed"},
+            headers={**admin_headers, "Idempotency-Key": "payment-status-002"},
+        ).status_code
+        == 409
+    )
     assert client.get("/api/v1/admin/audit-logs", headers=admin_headers).status_code == 200
     assert (
         client.get("/api/v1/admin/analytics", headers=admin_headers).json()["totals"]["completed"]

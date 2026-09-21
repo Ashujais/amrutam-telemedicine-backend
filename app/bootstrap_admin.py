@@ -7,7 +7,7 @@ import pyotp
 from sqlalchemy import select
 
 from app.db import SessionLocal
-from app.models import Role, User
+from app.models import Profile, Role, User
 from app.security import encrypt_mfa, hash_password
 
 
@@ -28,6 +28,8 @@ def main() -> None:
             mfa_enabled=True,
         )
         db.add(user)
+        db.flush()
+        db.add(Profile(user_id=user.id, full_name=email.split("@")[0]))
         db.commit()
     print(pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name="Amrutam"))
     print("Save the TOTP enrollment URI now; it is shown only once.")
