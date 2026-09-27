@@ -23,7 +23,6 @@ jobs:
     env:
       DATABASE_URL: postgresql+psycopg://amrutam:test-password@localhost:5432/amrutam_test
       REDIS_URL: redis://localhost:6379/1
-      JWT_SECRET: test-secret-at-least-thirty-two-characters
       MFA_ENCRYPTION_KEY: D5KMy6hAr2zk5Ig76orQPtLXAHXv1PbWrqvXA3aZqDE=
       ENVIRONMENT: test
       REQUIRE_INTEGRATION: "1"
